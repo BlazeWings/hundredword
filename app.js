@@ -26,7 +26,6 @@ const WORD_DATABASE = [
     { word: 'deadline', pronunciation: '/ˈdedlaɪn/', meaning: '截止日期', example: 'The deadline for this project is Friday.', difficulty: 'medium', category: 'business', tags: ['work'] },
     { word: 'negotiate', pronunciation: '/nɪˈɡəʊʃieɪt/', meaning: '谈判；协商', example: 'We need to negotiate the contract terms.', difficulty: 'hard', category: 'business', tags: ['work'] },
     { word: 'presentation', pronunciation: '/ˌpreznˈteɪʃn/', meaning: '演示；报告', example: 'She gave an excellent presentation.', difficulty: 'medium', category: 'business', tags: ['work'] },
-    { word: 'deadline', pronunciation: '/ˈdedlaɪn/', meaning: '截止日期', example: 'The deadline for this project is Friday.', difficulty: 'medium', category: 'business', tags: ['work'] },
     
     // 旅游英语
     { word: 'reservation', pronunciation: '/ˌrezəˈveɪʃn/', meaning: '预订', example: 'I have a reservation for tonight.', difficulty: 'medium', category: 'travel', tags: ['travel'] },
@@ -69,6 +68,7 @@ class EnglishLearningApp {
         this.currentFilter = { category: 'all', difficulty: 'all' };
         this.currentReviewIndex = 0;
         this.dailyWords = [];
+        this.voicesLoaded = false;
         
         // 加载用户数据
         this.userData = this.loadData('userData') || {
@@ -88,7 +88,32 @@ class EnglishLearningApp {
         
         this.chatHistory = this.loadData('chatHistory') || [];
         
+        // 初始化语音
+        this.initSpeech();
         this.init();
+    }
+
+    // 初始化语音API
+    initSpeech() {
+        if ('speechSynthesis' in window) {
+            // 加载语音列表
+            const loadVoices = () => {
+                this.voices = window.speechSynthesis.getVoices();
+                this.voicesLoaded = true;
+                console.log('语音库已加载:', this.voices.length, '个语音');
+            };
+            
+            // 监听语音加载事件
+            window.speechSynthesis.onvoiceschanged = loadVoices;
+            
+            // 立即加载一次（某些浏览器需要）
+            loadVoices();
+            
+            console.log('✅ Web Speech API 已初始化');
+        } else {
+            console.warn('❌ 浏览器不支持Web Speech API');
+            this.showNotification('您的浏览器不支持语音功能', 'error');
+        }
     }
 
     init() {
@@ -101,39 +126,79 @@ class EnglishLearningApp {
         
         // 检查复习提醒
         this.checkReviewReminder();
+        
+        console.log('✅ 应用初始化完成');
     }
 
     // 语音发音功能
     speakCurrentWord() {
         const word = this.getCurrentWord();
-        if ('speechSynthesis' in window) {
-            const utterance = new SpeechSynthesisUtterance(word.word);
-            utterance.lang = 'en-US';
-            utterance.rate = 0.9;
-            utterance.pitch = 1.1;
-            
-            // 使用更自然的语音
-            const voices = window.speechSynthesis.getVoices();
-            const englishVoice = voices.find(voice => voice.lang.includes('en') && voice.name.includes('Natural'));
-            if (englishVoice) {
-                utterance.voice = englishVoice;
-            }
-            
-            window.speechSynthesis.speak(utterance);
-            
-            // 显示通知
-            this.showNotification(`🔊 正在发音: ${word.word}`, 'info');
-        } else {
-            this.showNotification('您的浏览器不支持语音功能', 'error');
-        }
+        if (!word) return;
+        
+        this.speakWord(word.word);
     }
 
-    speakWord(word) {
-        if ('speechSynthesis' in window) {
-            const utterance = new SpeechSynthesisUtterance(word);
+    speakWord(wordText) {
+        if (!this.voicesLoaded) {
+            console.warn('语音未加载完成');
+            return;
+        }
+        
+        if (!('speechSynthesis' in window)) {
+            this.showNotification('您的浏览器不支持语音功能', 'error');
+            return;
+        }
+        
+        try {
+            // 停止当前正在播放的语音
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(wordText);
             utterance.lang = 'en-US';
-            utterance.rate = 0.9;
+            utterance.rate = 0.85; // 稍微慢一点，更清晰
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            
+            // 选择英文语音（优先选择Google US English）
+            const englishVoice = this.voices.find(voice => 
+                voice.lang && voice.lang.toLowerCase().includes('en') && 
+                (voice.name.includes('Google') || voice.name.includes('Natural') || voice.name.includes('US'))
+            );
+            
+            if (englishVoice) {
+                utterance.voice = englishVoice;
+                console.log('使用语音:', englishVoice.name);
+            } else {
+                // 使用第一个英文语音
+                const anyEnglishVoice = this.voices.find(voice => 
+                    voice.lang && voice.lang.toLowerCase().includes('en')
+                );
+                if (anyEnglishVoice) {
+                    utterance.voice = anyEnglishVoice;
+                }
+            }
+            
+            // 添加事件监听
+            utterance.onstart = () => {
+                console.log('🔊 开始朗读:', wordText);
+            };
+            
+            utterance.onend = () => {
+                console.log('✅ 朗读完成:', wordText);
+            };
+            
+            utterance.onerror = (event) => {
+                console.error('❌ 朗读错误:', event);
+                this.showNotification('语音播放失败', 'error');
+            };
+            
+            // 播放语音
             window.speechSynthesis.speak(utterance);
+            this.showNotification(`🔊 ${wordText}`, 'info', 1500);
+            
+        } catch (error) {
+            console.error('语音播放错误:', error);
+            this.showNotification('语音播放失败', 'error');
         }
     }
 
@@ -348,8 +413,10 @@ class EnglishLearningApp {
         // 更新按钮状态
         const isLearned = this.isWordLearned(word.word);
         const learnBtn = document.querySelector('.btn-success');
-        learnBtn.textContent = isLearned ? '✓ 已学会' : '✓ 标记已学会';
-        learnBtn.disabled = isLearned;
+        if (learnBtn) {
+            learnBtn.textContent = isLearned ? '✓ 已学会' : '✓ 标记已学会';
+            learnBtn.disabled = isLearned;
+        }
     }
 
     // 下一个单词
@@ -362,6 +429,8 @@ class EnglishLearningApp {
     // 标记为已学会
     markAsLearned() {
         const word = this.getCurrentWord();
+        if (!word) return;
+        
         this.markWordAsLearned(word, 'manual');
         this.showNotification(`✅ 已学会 "${word.word}"！`, 'success');
         this.displayCurrentWord();
@@ -372,6 +441,8 @@ class EnglishLearningApp {
     // 需要更多练习
     needMorePractice() {
         const word = this.getCurrentWord();
+        if (!word) return;
+        
         const wordData = {
             ...word,
             learnedAt: new Date().toISOString(),
@@ -527,6 +598,8 @@ class EnglishLearningApp {
     // SRS控制
     markAsEasy() {
         const word = this.getCurrentWord();
+        if (!word) return;
+        
         this.updateSRS(word.word, 'easy');
         this.showNotification('✅ 掌握良好！复习间隔已延长', 'success');
         this.nextWord();
@@ -534,6 +607,8 @@ class EnglishLearningApp {
 
     markAsHard() {
         const word = this.getCurrentWord();
+        if (!word) return;
+        
         this.updateSRS(word.word, 'hard');
         this.showNotification('📚 已记录，会加强复习', 'info');
     }
@@ -665,9 +740,9 @@ class EnglishLearningApp {
             const response = await this.callKimiAPI(messages);
             this.addChatMessage(response, 'ai');
             
-            // 朗读AI回复
-            if (message.length < 100) {
-                setTimeout(() => this.speakWord(response), 500);
+            // 朗读AI回复（简短内容）
+            if (response.length < 200) {
+                setTimeout(() => this.speakWord(response), 800);
             }
         } catch (error) {
             errorEl.textContent = `对话失败：${error.message}`;
@@ -675,6 +750,36 @@ class EnglishLearningApp {
         } finally {
             loadingEl.style.display = 'none';
         }
+    }
+
+    // 添加聊天消息
+    addChatMessage(content, sender) {
+        const container = document.getElementById('chat-container');
+        const messageEl = document.createElement('div');
+        messageEl.className = `message ${sender}`;
+        messageEl.textContent = content;
+        container.appendChild(messageEl);
+        
+        // 保存到历史
+        this.chatHistory.push({ role: sender, content });
+        this.saveData('chatHistory', this.chatHistory);
+        
+        // 滚动到底部
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // 加载聊天记录
+    loadChatHistory() {
+        const container = document.getElementById('chat-container');
+        if (!container) return;
+        
+        this.chatHistory.forEach(msg => {
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${msg.role}`;
+            messageEl.textContent = msg.content;
+            container.appendChild(messageEl);
+        });
+        container.scrollTop = container.scrollHeight;
     }
 
     // 更新学习连续天数
@@ -722,26 +827,31 @@ class EnglishLearningApp {
     // 更新进度显示
     updateProgressDisplay() {
         // 更新统计卡片
-        document.getElementById('total-learned').textContent = this.userData.learnedWords.length;
+        const totalLearnedEl = document.getElementById('total-learned');
+        if (totalLearnedEl) totalLearnedEl.textContent = this.userData.learnedWords.length;
         
         // 今日学习
         const today = new Date().toDateString();
         const todayLearned = this.userData.learnedWords.filter(w => 
             new Date(w.learnedAt).toDateString() === today
         ).length;
-        document.getElementById('today-learned').textContent = todayLearned;
+        const todayLearnedEl = document.getElementById('today-learned');
+        if (todayLearnedEl) todayLearnedEl.textContent = todayLearned;
         
         // 待复习
         const now = new Date();
         const dueToday = Object.values(this.userData.reviewSchedule)
             .filter(word => new Date(word.nextReview) <= now).length;
-        document.getElementById('due-today').textContent = dueToday;
+        const dueTodayEl = document.getElementById('due-today');
+        if (dueTodayEl) dueTodayEl.textContent = dueToday;
         
         // 连续天数
-        document.getElementById('streak-days').textContent = this.userData.studyStreak;
+        const streakEl = document.getElementById('streak-days');
+        if (streakEl) streakEl.textContent = this.userData.studyStreak;
         
         // 已掌握
-        document.getElementById('mastered-words').textContent = this.userData.masteredWords.length;
+        const masteredEl = document.getElementById('mastered-words');
+        if (masteredEl) masteredEl.textContent = this.userData.masteredWords.length;
         
         // 更新单词列表
         this.updateLearnedWordsList();
@@ -749,8 +859,11 @@ class EnglishLearningApp {
 
     // 更新已学单词列表
     updateLearnedWordsList() {
-        const categoryFilter = document.getElementById('progress-category-filter')?.value || 'all';
+        const categoryFilterEl = document.getElementById('progress-category-filter');
+        const categoryFilter = categoryFilterEl ? categoryFilterEl.value : 'all';
         const listEl = document.getElementById('learned-words-list');
+        
+        if (!listEl) return;
         
         let words = this.userData.learnedWords;
         if (categoryFilter !== 'all') {
@@ -806,13 +919,19 @@ class EnglishLearningApp {
 
     // 筛选功能
     filterByCategory() {
-        const category = document.getElementById('category-filter').value;
+        const categoryEl = document.getElementById('category-filter');
+        if (!categoryEl) return;
+        
+        const category = categoryEl.value;
         this.currentFilter.category = category;
         this.applyFilters();
     }
 
     filterByDifficulty() {
-        const difficulty = document.getElementById('difficulty-filter').value;
+        const difficultyEl = document.getElementById('difficulty-filter');
+        if (!difficultyEl) return;
+        
+        const difficulty = difficultyEl.value;
         this.currentFilter.difficulty = difficulty;
         this.applyFilters();
     }
@@ -881,6 +1000,8 @@ class EnglishLearningApp {
     // 显示通知
     showNotification(message, type = 'info', duration = 3000) {
         const notification = document.getElementById('notification');
+        if (!notification) return;
+        
         notification.textContent = message;
         notification.style.background = type === 'success' ? '#06d6a0' : 
                                        type === 'error' ? '#ef476f' : '#4361ee';
@@ -891,8 +1012,8 @@ class EnglishLearningApp {
         }, duration);
     }
 
-    // 切换页面
-    showSection(sectionName) {
+    // 切换页面（修复：添加事件参数）
+    showSection(sectionName, event = null) {
         // 隐藏所有section
         document.querySelectorAll('.section').forEach(section => {
             section.classList.remove('active');
@@ -904,14 +1025,29 @@ class EnglishLearningApp {
         });
         
         // 显示选中的section
-        document.getElementById(sectionName).classList.add('active');
+        const targetSection = document.getElementById(sectionName);
+        if (targetSection) {
+            targetSection.classList.add('active');
+        }
         
-        // 高亮对应的按钮
-        event.target.classList.add('active');
+        // 高亮对应的按钮（修复：使用事件目标或查找对应按钮）
+        if (event) {
+            event.target.classList.add('active');
+        } else {
+            // 如果没有事件对象，通过其他方式找到按钮
+            const buttons = document.querySelectorAll('.nav-btn');
+            buttons.forEach(btn => {
+                if (btn.onclick && btn.onclick.toString().includes(sectionName)) {
+                    btn.classList.add('active');
+                }
+            });
+        }
         
         // 特殊处理
         if (sectionName === 'review') {
             this.updateReviewList();
+        } else if (sectionName === 'progress') {
+            this.updateProgressDisplay();
         }
     }
 
@@ -941,21 +1077,35 @@ class EnglishLearningApp {
 
     // 本地存储
     saveData(key, data) {
-        localStorage.setItem(key, JSON.stringify(data));
+        try {
+            localStorage.setItem(key, JSON.stringify(data));
+        } catch (error) {
+            console.error('保存数据失败:', error);
+            this.showNotification('保存数据失败，可能是存储空间不足', 'error');
+        }
     }
 
     loadData(key) {
-        const data = localStorage.getItem(key);
-        return data ? JSON.parse(data) : null;
+        try {
+            const data = localStorage.getItem(key);
+            return data ? JSON.parse(data) : null;
+        } catch (error) {
+            console.error('加载数据失败:', error);
+            return null;
+        }
     }
 }
 
 // 初始化应用
-const app = new EnglishLearningApp();
+let app;
+document.addEventListener('DOMContentLoaded', function() {
+    app = new EnglishLearningApp();
+    console.log('🎯 AI英语学习应用已启动');
+});
 
-// 全局函数
-function showSection(sectionName) {
-    app.showSection(sectionName);
+// 全局函数（修复：传递事件对象）
+function showSection(sectionName, event) {
+    app.showSection(sectionName, event);
 }
 
 function nextWord() {
@@ -1023,15 +1173,13 @@ function reviewWord(word) {
 }
 
 // 键盘事件
-document.getElementById('chat-input')?.addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-        sendMessage();
+document.addEventListener('DOMContentLoaded', function() {
+    const chatInput = document.getElementById('chat-input');
+    if (chatInput) {
+        chatInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
     }
 });
-
-// 语音API加载
-if ('speechSynthesis' in window) {
-    window.speechSynthesis.onvoiceschanged = function() {
-        console.log('语音库已加载');
-    };
-}
